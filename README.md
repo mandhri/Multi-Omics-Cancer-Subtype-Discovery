@@ -13,7 +13,7 @@ output:
 
 ![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)
 ![Language](https://img.shields.io/badge/Languages-R%20%7C%20Python-blue)
-![Infrastructure](https://img.shields.io/badge/Infrastructure-HPC%20%2F%20Nectar%20Cloud-orange)
+![Infrastructure](https://img.shields.io/badge/Infrastructure-HPC-orange)
 
 ## Project Overview
 
