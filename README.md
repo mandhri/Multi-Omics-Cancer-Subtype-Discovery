@@ -17,85 +17,142 @@ output:
 
 ## Project Overview
 
-This repository hosts a **scalable hybrid workflow** for integrating
-Mass Spectrometry Proteomics and Transcriptomics data to identify
-molecular subtypes in cancer.
+This repository contains a **scalable hybrid workflow** that integrates:
 
-This pipeline utilises **R (Tidyverse)** for rigorous data engineering
-and visualisation, and **Python (Scikit-Learn/PyTorch)** for
-high-dimensional clustering and predictive modelling. The entire
-workflow runs on a “headless” remote server (HPC) accessed via **SSH
-Tunnelling**.
+- **Mass spectrometry proteomics** (protein abundance)
+- **RNA-seq transcriptomics** (gene expression)
+- **Clinical variables** (e.g., stage, grade, survival)
 
-## Data Sources & Types
+The goal is to **discover molecular subtypes in cancer**, interpret what separates them (biomarkers/pathways), and evaluate whether these subtypes relate to **clinical outcomes**.
 
-The analysis focuses on the **CPTAC (Clinical Proteomic Tumour Analysis
-Consortium)** cohort.
+The workflow uses:
+- **R (tidyverse + bioconductor)** for data cleaning, QC, statistics, and publication-grade plots
+- **Python (scikit-learn / PyTorch)** for dimensionality reduction, clustering, and predictive modelling
 
-| Data Type           | Technology                | Format                         | Dimensionality (Approx)         |
-|:--------------------|:--------------------------|:-------------------------------|:--------------------------------|
-| **Proteomics**      | TMT / Label-free LC-MS/MS | Abundance Ratio (Log)          | \~10,000 Proteins x 500 Samples |
-| **Transcriptomics** | RNA-Seq (Illumina)        | FPKM / Counts                  | \~20,000 Genes x 500 Samples    |
-| **Clinical**        | EMR / Pathology           | Mixed (Categorical/Continuous) | Survival, Grade, Stage          |
+The pipeline is designed to run on a **headless HPC/remote server**, accessed locally via **SSH tunnelling** (RStudio + JupyterLab in the browser).
 
-## Architecture
+---
 
-The project solves the “Infrastructure Gap” using a manual tunnelling
-approach:
+## Data Source
 
-1.  **Remote Server (Backend):** High-Memory HPC Compute Node holding
-    the 50GB+ datasets.
-2.  **Local Client (Frontend):** SSH Tunnel forwarding port `8889`
-    (JupyterLab) and `8787` (RStudio) to the local browser.
-3.  **Environment:** A unified `conda` environment (`python_ai_env`)
-    shared by both RStudio (`reticulate`) and JupyterLab.
+This analysis focuses on cohorts from **CPTAC (Clinical Proteomic Tumour Analysis Consortium)**.
+
+| Data Type | Technology | Typical Input | Dimensionality (Approx.) |
+|---|---|---|---|
+| **Proteomics** | TMT / label-free LC–MS/MS | log-intensity / log-ratio matrix | ~5k–12k proteins × ~100–500 samples |
+| **Transcriptomics** | RNA-seq (Illumina) | raw counts / normalised expression | ~15k–25k genes × ~100–500 samples |
+| **Clinical** | patient metadata | categorical + continuous | survival, grade, stage, etc. |
+
+> Note: exact dimensions vary by tumour type and CPTAC release.
+
+---
+
+## Architecture (HPC-Friendly Setup)
+
+This project is built to work well with large datasets and remote compute:
+
+1. **Remote server (backend):** HPC compute node with high memory + local storage for large CPTAC files  
+2. **Local browser (frontend):** SSH tunnel forwards:
+   - `8889` → JupyterLab
+   - `8787` → RStudio Server
+3. **Environment:** one shared `conda` env (e.g., `python_ai_env`)
+   - R can call Python via `reticulate`
+   - Python notebooks/scripts run in the same environment
+
+---
 
 ## Analysis Workflow
 
-### Phase 1: Data Ingestion & Engineering (R)
+### Phase 1 — Data Ingestion & Engineering (R)
+**Goal:** produce clean, matched matrices ready for downstream modelling.
 
-**Goal:** Cleanse and harmonise heterogeneous omics data.
+- **Proteomics QC + missingness review**
+  - characterise missing values (common in mass spec)
+  - impute using approaches supported by `DEP` / `MSnbase` when appropriate
+- **Normalisation**
+  - RNA-seq: start from counts and transform to ML-friendly values (e.g., log-scale normalised expression)
+  - Proteomics: typical approaches include median/VSN-style scaling
+- **Batch assessment**
+  - visualise technical effects (PCA, metadata checks)
+  - apply batch correction only if clearly required
 
-* **Missing Value Imputation:** Handling missing Mass Spec values (MNAR/MAR) using `MSnbase` / `DEP`.
-* **Normalisation:** TMM normalisation for RNA-seq and VSN/Median centring for Proteomics.
-* **Batch Correction:**  Assessment and removal of technical batch effects using PCA/SVA.
-* *Output:* Cleaned, matched `.csv` matrices.
+**Output:** cleaned, aligned sample-by-feature matrices saved to `data/processed/`
 
-### Phase 2: Dimensionality Reduction & Integration (Python)
+---
 
-**Goal:** Discover latent biological signals in high-dimensional space.
-* **Feature Selection:** Variance filtering to remove static features.
-* **Dimensionality Reduction:** UMAP and t-SNE projections to visualise patient manifold.
-* **Integration:** Fusing RNA and Protein layers (Potential methods: MOFA+, Autoencoders).
+### Phase 2 — Dimensionality Reduction & Integration (Python)
+**Goal:** learn a compact representation of each patient/sample.
 
-### Phase 3: Subtype Discovery & Classification (Python)
+- **Feature filtering**
+  - remove near-constant features and obvious noise
+- **Dimensionality reduction**
+  - PCA / UMAP / t-SNE for visualising sample structure
+- **Integration**
+  - start with a simple baseline (concatenate scaled omics layers)
+  - optionally add a dedicated integration method later (e.g., factor models or neural embeddings)
 
-**Goal:** Define and predict molecular subtypes. 
-* **Clustering:** Unsupervised clustering (K-Means / Leiden) on integrated features to
-define “Novel Subtypes.” 
-* **Prediction:** Training Random Forest/ XGBoost classifiers to predict Clinical Survival from Omics features. 
-* **Feature Importance:** Extracting the top 50 Biomarkers driving the separation.
+**Output:** integrated latent matrix + embeddings used for clustering.
 
-### Phase 4: Visualisation & Reporting (R)
+---
 
-**Goal:** Publication-quality figures. 
-* **Survival Analysis:** Kaplan-Meier curves (`survival`, `survminer`) comparing the new Subtypes.
-* **Heatmaps:** ComplexHeatmap visualisation of the top differential proteins.
-* **Pathway Analysis:** FGSEA / ORA to understand the biological context of the clusters.
+### Phase 3 — Subtype Discovery & Modelling (Python)
+**Goal:** define subtypes and test whether they matter clinically.
+
+- **Clustering**
+  - k-means / Leiden (graph-based) on integrated features
+  - compare results across settings to avoid “random” clusters
+- **Subtype association with outcomes**
+  - survival comparison across subtypes (later plotted in R)
+- **Prediction (optional)**
+  - train baseline models (Random Forest / XGBoost) for outcome prediction
+  - extract feature importance to highlight candidate biomarkers
+
+**Output:** subtype labels per patient + model outputs (metrics, feature importance).
+
+---
+
+### Phase 4 — Visualisation & Reporting (R)
+**Goal:** publishable figures and interpretable biology.
+
+- **Survival analysis**
+  - Kaplan–Meier curves (`survival`, `survminer`) by subtype
+- **Heatmaps**
+  - top subtype-defining proteins/genes (`ComplexHeatmap`)
+- **Pathway analysis**
+  - FGSEA / ORA for biological interpretation
+
+**Output:** figures + tables saved to `reports/` (or exported for manuscripts).
+
+---
+
+## Quality Checks (Added as You Learn)
+
+To keep results reliable, this repo will progressively add:
+
+1. **RNA-seq inputs that are ML-friendly** (avoid relying on FPKM)
+2. **Careful batch handling** (avoid removing real biology)
+3. **A clear proteomics missingness strategy** (conservative vs exploratory)
+4. **Cluster stability checks** (not just one run)
+5. **Leakage-safe model evaluation** (proper cross-validation workflow)
+6. **A small set of integration methods** (baseline + 1–2 stronger methods)
+
+---
 
 ## Directory Structure
 
-``` bash
+```bash
 ├── data/
-│   ├── raw/                 # Original CPTAC downloads (Gitignored)
-│   ├── processed/           # Cleaned matrices ready for ML
+│   ├── raw/                   # Original CPTAC downloads (gitignored)
+│   └── processed/             # Cleaned matrices ready for ML
 ├── R/
-│   ├── 01_data_cleaning.R   # Tidyverse scripts for QC
-│   ├── 04_visualization.R   # ComplexHeatmap & Survival plots
+│   ├── 01_data_cleaning.R     # QC + preprocessing
+│   └── 04_visualization.R     # survival plots, heatmaps, pathways
 ├── python/
-│   ├── 02_integration.ipynb # Jupyter Notebooks for UMAP/Clustering
-│   ├── 03_classification.py # ML training scripts
+│   ├── 02_integration.ipynb   # embeddings + clustering exploration
+│   └── 03_classification.py   # modelling scripts (optional)
 ├── envs/
-│   └── environment.yml      # Conda environment specification
-└── README.md                # Project Blueprint
+│   └── environment.yml        # Conda environment specification
+└── README.md                  # Project blueprint
+
 ```
+
