@@ -125,7 +125,7 @@ This project is built to work well with large datasets and remote compute:
 
 ---
 
-## Quality Checks (Added as You Learn)
+## Quality Checks
 
 To keep results reliable, this repo will progressively add:
 
@@ -146,7 +146,7 @@ To keep results reliable, this repo will progressively add:
 │   └── processed/             # Cleaned matrices ready for ML
 ├── R/
 │   ├── 01_data_cleaning.R     # QC + preprocessing
-│   └── 04_visualization.R     # survival plots, heatmaps, pathways
+│   └── 04_visualisation.R     # survival plots, heatmaps, pathways
 ├── python/
 │   ├── 02_integration.ipynb   # embeddings + clustering exploration
 │   └── 03_classification.py   # modelling scripts (optional)
