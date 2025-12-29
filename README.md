@@ -141,18 +141,22 @@ To keep results reliable, this repo will progressively add:
 ## Directory Structure
 
 ```bash
-├── data/
-│   ├── raw/                   # Original CPTAC downloads (gitignored)
-│   └── processed/             # Cleaned matrices ready for ML
-├── R/
-│   ├── 01_data_cleaning.R     # QC + preprocessing
-│   └── 04_visualisation.R     # survival plots, heatmaps, pathways
-├── python/
-│   ├── 02_integration.ipynb   # embeddings + clustering exploration
-│   └── 03_classification.py   # modelling scripts (optional)
-├── envs/
-│   └── environment.yml        # Conda environment specification
-└── README.md                  # Project blueprint
+Multi-Omics-Cancer-Subtype-Discovery/
+├── README.md
+├── Multi-Omics-Cancer-Subtype-Discovery.Rproj
+├── notebooks/                
+├── R/                         
+│   ├── 00_config.R
+│   └── functions/
+├── analysis/                  
+│   └── report.Rmd            
+├── results/                  
+│   ├── figures/
+│   └── tables/
+└── data/                      
+    ├── raw/                  
+    └── processed/            
+
 
 ```
 
