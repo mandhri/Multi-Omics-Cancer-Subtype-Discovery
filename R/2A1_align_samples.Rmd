@@ -1,0 +1,123 @@
+---
+title: ""
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Introduction
+
+
+
+# Setup and Dependencies
+
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+  
+})
+```
+
+
+# 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+raw_path <- "/mnt/vol1/Multi-Omics-Cancer-Subtype-Discovery/data/raw"
+
+
+clinical <- read.csv(file.path(raw_path, "clinical.csv"), row.names = 1, check.names = FALSE)
+prot <- read.csv(file.path(raw_path, "proteomics.csv"), row.names = 1, check.names = FALSE)
+rna<- read.csv(file.path(raw_path, "transcriptomics.csv"), row.names = 1, check.names = FALSE)
+
+print(paste("Clinical Rows:", nrow(clinical)))
+print(paste("Proteomics Rows:", nrow(prot)))
+print(paste("Transcriptomics Rows:", nrow(rna)))
+
+
+```
+
+# Visualising the Overlap
+
+```{r gtex, message=FALSE, warning=FALSE, echo=TRUE}
+
+# Keep Ensembl IDs
+rna_ens <- as.character(rna["Database_ID", ])
+prot_ens <- as.character(prot["Database_ID", ])
+
+# Remove the two non-sample rows
+rna <- rna[!(rownames(rna)  %in% c("Database_ID", "Patient_ID")), , drop = FALSE]
+prot <- prot[!(rownames(prot) %in% c("Database_ID", "Patient_ID")), , drop = FALSE]
+
+rna[] <- lapply(rna, as.numeric)
+prot[]<- lapply(prot, as.numeric)
+
+anyDuplicated(colnames(rna))
+anyDuplicated(colnames(prot))
+
+# Gene mapping with Ensembl IDs for proteomics and transcriptomics
+rna_map <- data.frame(gene_symbol = colnames(rna),  ensembl_id = rna_ens,  stringsAsFactors = FALSE)
+prot_map <- data.frame(gene_symbol = colnames(prot), ensembl_id = prot_ens, stringsAsFactors = FALSE)
+processed_path <- "/mnt/vol1/Multi-Omics-Cancer-Subtype-Discovery/data/processed"
+saveRDS(rna_map,  file.path(processed_path, "rna_gene_map.rds"))
+saveRDS(prot_map, file.path(processed_path, "prot_gene_map.rds"))
+
+
+# Extract Patient IDs 
+patients_clin <- rownames(clinical)
+patients_prot <- rownames(prot)
+patients_rna  <- rownames(rna)
+
+
+# Intersection
+common_patients <- intersect(patients_clin, intersect(patients_prot, patients_rna))
+common_patients <- sort(common_patients)
+length(common_patients)
+
+
+print(paste("Only in clinical:", length(setdiff(rownames(clinical), common_patients))))
+print(paste("Only in prot:", length(setdiff(rownames(prot), common_patients))))
+print(paste("Only in rna:", length(setdiff(rownames(rna), common_patients))))
+
+
+# subset to common samples (same row order)
+clinical_a <- clinical[common_patients, , drop = FALSE]
+prot_a<- prot[common_patients, , drop = FALSE]
+rna_a <- rna[common_patients, , drop = FALSE]
+
+print("Aligned shapes:")
+print(dim(clinical_a))
+print(dim(prot_a))
+print(dim(rna_a))
+
+processed_path <- "/mnt/vol1/Multi-Omics-Cancer-Subtype-Discovery/data/processed"
+
+saveRDS(clinical_a, file.path(processed_path, "clinical_a.rds"))
+saveRDS(prot_a, file.path(processed_path, "proteomics_a.rds"))
+saveRDS(rna_a, file.path(processed_path, "transcriptomics_a.rds"))
+
+```
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+sessionInfo()
+
+
+```
+

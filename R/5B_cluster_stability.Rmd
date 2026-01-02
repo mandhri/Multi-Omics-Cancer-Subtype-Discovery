@@ -1,0 +1,417 @@
+---
+title: "Baseline Subtype Discovery-sensitivity testing"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Introduction
+
+This report performs baseline cancer subtype discovery using k-means clustering on principal components (PCs) derived from multi-omics data. The goal is not only to produce subtype labels, but also to test whether the subtypes are stable and not driven by obvious technical artefacts such as sample type differences.
+
+Subtype discovery is an unsupervised ML problem. There is no ground-truth label. Because of that, the output must be checked using multiple quality checks. This script focuses on three main questions.
+
+First question. Are the clusters separated at all in the feature space.
+Second question. Are the clusters stable, meaning do they reappear when k-means is re-run.
+Third question. Are the clusters mostly driven by a technical factor such as Tumour versus Tumour_and_Normal samples.
+
+# Setup and Dependencies
+
+The key packages for this script are cluster for silhouette, mclust for ARI, and rcompanion for Cramer’s V.
+
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+library("inflection")  
+library("ConsensusClusterPlus")  
+library("mclust")
+library("rcompanion")
+library("cluster")
+  
+  
+  
+  
+})
+```
+
+
+# Compare k = 7 vs 8 vs 9 on both separation and stability
+
+What is being clustered:
+
+The object pcs contains the patient coordinates in PC space. Each row is one patient sample. Each column is one PC. If pcs is 95×20, that means 95 patients and 20 PC features per patient. Each patient is a point in a 20-dimensional space. k-means clusters these points.
+k-means assigns every patient to exactly one cluster. The number of clusters is chosen by the parameter k.
+
+k-means takes one input that matters most here: centers = k. That number is the intended number of clusters. k-means always returns exactly k clusters, even if the data does not contain real groups. This is why k must be tested rather than assumed.
+
+The parameter nstart = 50 means k-means tries 50 different random initial centroid placements and keeps the best solution, where “best” means the smallest within-cluster sum of squares. This reduces the risk of a bad local solution caused by poor initialisation.
+
+Why multiple k values are tested:
+
+Cancer data often contains a mix of:
+tumour biology signals (immune infiltration, proliferation, EMT, genomic instability) and non-biological signals (sample composition, batch, processing differences)
+
+Some cancer patterns are continuous gradients rather than clean groups. Because of this, k-means can produce clusters even when there are no true discrete subtypes. Trying multiple k values and checking quality reduces the risk of over-interpreting a random split.
+
+## Silhouette strength + % negative
+
+Silhouette is a geometry check. It asks whether each patient is closer to patients in its own cluster than to patients in other clusters. It measures separation of clusters in the feature space. It does not prove that clusters are true biological subtypes.
+
+Silhouette works using distances between patients. This is why the distance matrix is built first:
+D <- dist(pcs)
+D contains all pairwise distances between the patients in PC space. Each patient is compared against every other patient.
+
+For a single patient i, silhouette uses two quantities:
+a(i) is the average distance from patient i to other patients inside the same cluster. This measures how tight the patient’s own cluster is around that patient.
+b(i) is the smallest average distance from patient i to patients in any other cluster. This finds the nearest competing cluster.
+
+Silhouette for patient i is:
+
+s(i) = (b(i) − a(i)) / max(a(i), b(i))
+
+The silhouette value ranges from −1 to 1.
+If s(i) is near 1, the patient is well placed. It is close to its own cluster and far from other clusters.
+If s(i) is near 0, the patient sits on a boundary.
+If s(i) is negative, the patient is closer to another cluster than the assigned one, which suggests a questionable assignment.
+
+Range:
+near 1: very well placed (tight cluster, far from others)
+near 0: on the border
+negative: closer to another cluster than its own (bad assignment)
+
+Why calculate neg_frac?
+Because the mean silhouette can hide problems. If a few points are really badly assigned, you want to know.
+
+How to interpret result?
+mean silhouette ~ 0.18 for k=7/8/9
+neg_frac low, but k=9 higher
+There is structure, but it’s not super clean.
+In real cancer data, that’s common. Tumours can vary continuously (not always crisp groups).
+Silhouette says: 7–9 are similar quality.
+
+Why silhouette alone is not enough in cancer?
+Cancer samples often vary along continuous axes. Examples are tumour purity and stromal infiltration, immune infiltration, proliferation and cell cycle programmes, EMT or inflammation gradients, and genomic instability. These are often gradients rather than clean discrete groups. k-means can slice a gradient into multiple clusters. This can look “locally cohesive” even if there are no true discrete subtypes. Because of this, silhouette is used as one quality check, not as the final decision rule.
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+#Builds a distance matrix which calculates distance between patients in PC space. If pcs is 95×20, D is the pairwise distances between 95 samples. Each patient is a point in 20-D space.
+
+D <- dist(pcs)
+
+sil_summary <- lapply(c(7,8,9), function(k){
+  set.seed(1)
+  #runs k-means 50 times with different random starts and keeps the best one (lowest     
+  #within-cluster sum of squares). This reduces “bad local minima”.
+  lab <- kmeans(pcs, centers=k, nstart=50)$cluster
+    #computes silhouette for each patient and takes the silhouette value column
+  ss <- silhouette(lab, D)[,3]
+  data.frame(
+    k = k,
+    #summarises overall separation
+    mean_sil = mean(ss),
+    #counts how many patients have silhouette < 0 (they’re closer to another cluster than 
+    #their assigned one)
+    neg_frac = mean(ss < 0)
+  )
+})
+do.call(rbind, sil_summary)
+
+
+```
+
+## Cluster size check for each k
+
+What cluster size answers?
+
+Cluster size is a sanity check. It asks whether k-means has created very small clusters. This is important because k-means will always create k clusters. When k is too large, one common outcome is a tiny cluster that mostly captures outliers or extreme samples.
+
+How to interpret result?
+k=7: min size 9
+k=8: min size 8
+k=9: min size 5
+
+That’s why k=9 is suspicious. A 5-sample cluster might be real, but it needs extra evidence.
+
+Why this matters in cancer subtyping?
+
+Tiny clusters can sometimes represent a rare subtype, but a rare subtype needs strong supporting evidence. More often, tiny clusters arise from noise, batch effects, purity extremes, or over-splitting of a continuous trend.
+
+Small clusters also reduce statistical power later. If survival analysis, differential expression, differential protein abundance, or pathway analysis is planned, then clusters of size 4 to 5 often produce unstable estimates and results that can flip based on one sample. That is why min_size is checked early.
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+size_summary <- lapply(c(7,8,9), function(k){
+  set.seed(1)
+  
+  # counts how many times each cluster label appears 
+  tab <- table(kmeans(pcs, centers=k, nstart=50)$cluster)
+  data.frame(k=k, min_size=min(tab), max_size=max(tab))
+})
+do.call(rbind, size_summary)
+
+
+```
+# Check k-means stability with ARI
+
+What stability means?
+
+Stability here means whether the same clustering solution appears repeatedly when the algorithm is re-run with different random initialisations.
+
+k-means starts with random initial centroid positions. Different starts can produce different final clusters if the data contains weak structure or multiple near-optimal solutions. Even with nstart=50, different seeds can lead to different selected “best” solutions, because the set of 50 random starts changes with the seed.
+
+This is why stability is tested.
+
+What ARI is?
+ARI (Adjusted Rand Index) answers:
+“Do two different clustering runs produce the same grouping?”
+
+ARI is a similarity score between two clusterings of the same patients. ARI is not a clustering algorithm. It is a comparison metric.
+
+ARI compares patient pairs. For every pair of patients, it checks whether the pair is placed in the same cluster or different clusters in clustering A, and whether the pair is placed in the same cluster or different clusters in clustering B. The score is then adjusted for the amount of agreement expected by chance.
+
+
+Range:
+1.0 = identical clustering
+0.0 = unrelated (random agreement)
+<0 = worse than random
+min_ARI: worst-case stability (conservative)
+median: typical behaviour
+max: best-case
+
+
+How to interpret result:
+k=7 min ARI ~ 0.77
+k=8 min ARI = 1.0
+k=9 min ARI ~ 0.71
+
+This is huge: k=8 is perfectly stable under random initialisation, while 7 and 9 wobble.
+
+So ARI is telling you:
+
+“k=8 is the most reliable clustering solution.”
+
+
+```{r, message=FALSE, warning=FALSE, fig.height=5.5, fig.width=10,echo=TRUE}
+
+stability_ari <- function(pcs, k, seeds=1:20){
+  set.seed(1)
+  #Defines a reference clustering
+  ref <- kmeans(pcs, centers=k, nstart=50)$cluster
+  #reruns kmeans for many seeds.
+  aris <- sapply(seeds, function(s){
+    set.seed(s)
+    lab <- kmeans(pcs, centers=k, nstart=50)$cluster
+    #compares two clusterings and outputs ARI
+    adjustedRandIndex(ref, lab)
+  })
+  data.frame(
+    k = k,
+    min_ARI = min(aris),
+    median_ARI = median(aris),
+    max_ARI = max(aris)
+  )
+}
+
+do.call(rbind, lapply(c(7,8,9), \(k) stability_ari(pcs, k)))
+
+
+ari_values <- function(pcs, k, seeds=1:20){
+  set.seed(1)
+  ref <- kmeans(pcs, centers=k, nstart=50)$cluster
+  sapply(seeds, function(s){
+    set.seed(s)
+    lab <- kmeans(pcs, centers=k, nstart=50)$cluster
+    adjustedRandIndex(ref, lab)
+  })
+}
+
+df_ari <- do.call(rbind, lapply(c(7,8,9), function(k){
+  data.frame(
+    k = factor(k),
+    seed = 1:20,
+    ari = ari_values(pcs, k)
+  )
+}))
+
+
+df_ari$k <- factor(df_ari$k)
+
+
+df_ari$delta <- 1 - df_ari$ari
+
+ggplot(df_ari, aes(x = k, y = delta)) +
+  geom_boxplot(width = 0.45, outlier.shape = NA, fill = "grey95") +
+  geom_jitter(width = 0.08, alpha = 0.7, size = 2) +
+  stat_summary(fun = mean, geom = "point", shape = 17, size = 4, colour = "darkgreen") +
+  labs(title = "K-means stability (1 − ARI)",
+       x = "k", y = "1 − ARI") +
+  theme_classic(base_size = 18)
+
+
+
+```
+
+# Rule out technical artefacts (must-do for subtyping)
+
+Why technical confounding must be checked?
+Unsupervised clustering does not know what biology is. It clusters based on the strongest patterns in the data. The strongest pattern can be a technical signal.
+In multi-omics cancer datasets, a major technical or composition-related driver is sample type. Tumour_and_Normal indicates mixed composition. That can reflect tumour purity or normal contamination. This can shift gene expression and protein profiles, producing clusters that look like “subtypes” but actually reflect sample composition.
+
+This section checks whether subtype labels are associated with sample type.
+What this is testing
+This answers:
+“Did my clustering just rediscover a lab/technical grouping instead of biology?”
+
+In cancer multi-omics, common technical drivers include:
+sample type (tumour vs mixed tumour+normal)
+batch/run/centre/plate
+differences in how samples were collected/processed
+
+If a subtype is almost entirely one technical category, that’s a red flag.
+
+Result:
+The clusters were mixed across Tumour and Tumour_and_Normal. Good sign!
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+k_final <- 8
+set.seed(1)
+km_final <- kmeans(pcs, centers = k_final, nstart = 50)
+
+subtypes <- data.frame(
+  subtype = factor(paste0("C", km_final$cluster), levels = paste0("C", 1:k_final)),
+  row.names = rownames(pcs)
+)
+
+table(subtypes$subtype)
+
+clin <- readRDS(file.path(processed_path, "clinical_a.rds"))
+
+#aligns clinical rows to the same patient order as pcs.
+clin <- clin[rownames(pcs), , drop=FALSE]
+
+colnames(clin) <- make.unique(colnames(clin))
+clin2 <- clin[rownames(subtypes), , drop=FALSE]
+table(subtypes$subtype, clin2$type_of_analyzed_samples, useNA="ifany")
+table(subtypes$subtype, clin2$type_of_analyzed_samples.1, useNA="ifany")
+
+plot(pcs[,1], pcs[,2], col = as.integer(factor(subtypes$subtype)), pch=19,
+     xlab="ProtPC1", ylab="ProtPC2 (or combined PC2)", main="Clusters (k=8)")
+legend("topright", legend=levels(factor(subtypes$subtype)),
+       col=seq_along(levels(factor(subtypes$subtype))), pch=19)
+
+k_final
+table(subtypes$subtype)
+length(unique(subtypes$subtype))
+levels(factor(subtypes$subtype))
+
+subtypes$subtype <- droplevels(factor(subtypes$subtype))
+table(subtypes$subtype)
+
+```
+
+# Run an association test (chi-square / Fisher)
+
+What this is testing?
+
+Instead of eye balling the table, this quantifies:
+“Is cluster membership statistically associated with sample type?”
+If cluster is associated with sample type, clusters may reflect purity/processing rather than tumour biology.
+
+These tests quantify the association between:
+cluster label
+and sample type
+
+The null hypothesis is that cluster membership is independent of sample type.
+
+Chi-square provides an approximate test and assumes reasonable expected counts.
+Fisher provides an exact test and is safer for smaller counts.
+Cramer’s V reports effect size. Values closer to 0 indicate weak association. Values closer to 1 indicate strong association.
+
+Results:
+
+p ~ 0.44 (both tests): not associated
+So sample type likely not the main thing creating clusters, which is what you want!   
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+colnames(clin) <- make.unique(colnames(clin))
+
+tab <- table(subtypes$subtype, clin$type_of_analyzed_samples, useNA="no")
+tab
+
+# Chi-square (ok if expected counts aren't too tiny)
+chisq.test(tab)
+
+# Fisher (safer with small cells; might be slow but your table is small)
+fisher.test(tab)
+
+cramerV(tab)
+
+
+```
+# Sensitivity analysis: rerun clustering on Tumor-only samples
+
+What sensitivity means here?
+
+Sensitivity analysis means checking whether results remain similar after changing a key assumption.
+
+Here, the assumption is that Tumor_and_Normal samples might introduce composition effects. The sensitivity test removes those samples and reruns the clustering on Tumor-only patients.
+
+This tests whether clusters remain present when a suspected confounder group is removed.
+
+Reasonable cluster sizes and a sensible distribution after filtering support robustness.
+Many tiny clusters, collapse into a single large cluster, or extreme imbalance suggest the original clustering may be sensitive to sample composition.
+
+A stronger follow-up check is to compute ARI between tumour-only clustering and the original clustering restricted to tumour samples. That directly measures whether cluster assignments stay consistent after removing mixed samples.
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+tumour_only <- clin$type_of_analyzed_samples == "Tumor"
+pcs_t <- pcs[tumour_only, , drop=FALSE]
+
+set.seed(1)
+km_t <- kmeans(pcs_t, centers = 8, nstart = 50)  # use your chosen k (I still like k=8)
+table(km_t$cluster)
+
+```
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+set.seed(1)
+km_final <- kmeans(pcs, centers = k_final, nstart = 50)
+
+subtypes <- data.frame(subtype = paste0("C", km_final$cluster),
+row.names = rownames(pcs))
+
+print(table(subtypes$subtype))
+
+# Save
+
+write.csv(pcs, file.path(processed_path, "pca_20pcs.csv"))
+write.csv(subtypes, file.path(processed_path, "subtype_labels.csv"))
+
+write.csv(data.frame(feature = colnames(rna_k)),
+file.path(processed_path, "rna_features_knee.csv"), row.names=FALSE)
+
+write.csv(data.frame(feature = colnames(prot_k)),
+file.path(processed_path, "prot_features_knee.csv"), row.names=FALSE)
+
+
+```

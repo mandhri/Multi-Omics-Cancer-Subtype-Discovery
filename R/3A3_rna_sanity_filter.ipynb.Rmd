@@ -1,0 +1,120 @@
+---
+title: "RNA sanity filter"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Introduction
+
+RNA-seq tables often include thousands of genes that barely change across samples (near-constant). Those genes:
+
+add noise,
+
+slow computation,
+
+can dominate distance calculations in subtle ways.
+
+So we drop genes with almost zero variance across the 95 tumour samples.
+
+# Setup and Dependencies
+
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+  
+})
+```
+
+
+# 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+processed_path <- "/mnt/vol1/Multi-Omics-Cancer-Subtype-Discovery/data/processed"
+
+clinical_a<- readRDS(file.path(processed_path, "clinical_a.rds"))
+prot_a<- readRDS(file.path(processed_path, "proteomics_a.rds"))
+rna_a<- readRDS(file.path(processed_path, "transcriptomics_a.rds"))
+
+print(dim(clinical_a))
+print(dim(prot_a))
+print(dim(rna_a))
+
+# make RNA numeric 
+rna <- as.data.frame(lapply(rna_a, function(x) as.numeric(as.character(x))))
+rownames(rna) <- rownames(rna_a)
+
+print(paste("Total missing values:", sum(is.na(rna))))
+print(paste("Min value:", min(as.matrix(rna), na.rm = TRUE)))
+print(paste("Max value:", max(as.matrix(rna), na.rm = TRUE)))
+```
+
+# Remove near-constant genes
+
+Differential expression (DESeq2): filter on counts (rowSums >= 10).Goal: Remove "Low Expression." 
+
+Clustering/subtyping on normalised/log expression: filter on variability (var > 1e-6). Goal: Remove "Zero Information." 
+Why: We are doing Clustering (Subtype Discovery). Clustering algorithms don't care if a gene is "High" or "Low" abundance; they care if it Changes.
+
+
+When we are doing subtyping / clustering, the goal is to keep features that separate patients. Hence, a gene that barely changes across the 95 patients is useless for clustering. Variance is a direct way to detect that.
+
+
+```{r gtex, message=FALSE, warning=FALSE, echo=TRUE}
+
+gene_var <- apply(rna, 2, var, na.rm = TRUE)
+keep <- gene_var > 1e-6
+
+rna_f <- rna[, keep, drop = FALSE]
+
+print(paste("Genes before:", ncol(rna)))
+print(paste("Genes after :", ncol(rna_f)))
+
+
+```
+
+# Imputations 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+rna_imp <- rna_f
+
+for (j in seq_len(ncol(rna_imp))) {
+  if (any(is.na(rna_imp[, j]))) {
+    med <- median(rna_imp[, j], na.rm = TRUE)
+    rna_imp[is.na(rna_imp[, j]), j] <- med
+  }
+}
+
+print(paste("Missing after imputation:", sum(is.na(rna_imp))))
+saveRDS(rna_imp, file.path(processed_path, "rna_filtered_imputed.rds"))
+
+```
+
+
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+sessionInfo()
+
+
+```
+
