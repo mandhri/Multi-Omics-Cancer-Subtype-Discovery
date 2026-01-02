@@ -1,0 +1,286 @@
+---
+title: "Baseline Subtype Discovery-sensitivity testing"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Introduction
+
+
+# Setup and Dependencies
+
+The key packages for this script are cluster for silhouette, mclust for ARI, and rcompanion for Cramer’s V.
+
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+library("inflection")  
+library("ConsensusClusterPlus")  
+library("mclust")
+library("rcompanion")
+library("cluster")
+library("survival")
+library("survminer")
+
+})
+```
+
+
+# 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+grep("Overall survival|Survival status|Recurrence-free|Recurrence status|vital_status|death|follow_up|last_contact",
+     names(clin), value = TRUE)
+
+
+
+```
+
+#
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+# OS time and event
+clin$OS_time  <- as.numeric(clin[["Overall survival, days"]])
+clin$OS_event <- as.numeric(clin[["Survival status (1, dead; 0, alive)"]])
+
+# quick checks
+table(clin$OS_event, useNA="ifany")
+summary(clin$OS_time)
+
+# remove missing survival rows
+clin_os <- clin[!is.na(clin$OS_time) & !is.na(clin$OS_event), ]
+table(clin_os$subtype)
+
+
+
+```
+
+#  Kaplan–Meier plot (safe even with 10 deaths)
+
+
+Kaplan–Meier plot
+
+Reported p-value on the plot: p = 0.46
+
+That matches the log-rank test: p = 0.5
+
+Interpretation (plain):
+
+With k=8, overall survival curves are not significantly different between subtypes in this dataset.
+
+Cancer/ML context:
+
+That does not mean the clusters are “wrong”.
+
+It often means insufficient events to detect differences (you only have 10 deaths total).
+
+From survdiff():
+
+C1: 0 deaths (N=8)
+
+C3: 0 deaths (N=8)
+
+C8: 0 deaths (N=12)
+
+Most subtypes have 0–2 events, and C2 has 4.
+
+This makes:
+
+KM curves look “flat” (few drops)
+
+Cox models with 8 subtypes basically unreliable
+
+So the correct takeaway is:
+
+“No evidence of OS differences detected; power is limited due to low death events.”
+
+```{r, message=FALSE, warning=FALSE, fig.height=5.5, fig.width=10,echo=TRUE}
+
+fit_os <- survfit(Surv(OS_time, OS_event) ~ subtype, data = clin_os)
+
+ggsurvplot(
+  fit_os,
+  data = clin_os,
+  risk.table = TRUE,
+  pval = TRUE,
+  conf.int = FALSE,
+  xlab = "Days",
+  ylab = "Overall survival probability",
+  title = "Overall survival by subtype (k = 8)"
+)
+
+survdiff(Surv(OS_time, OS_event) ~ subtype, data = clin_os)
+
+```
+
+
+# Run Recurrence-free survival (RFS) instead of OS
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+# Event indicator: 1 = recurrence, 0 = no recurrence (censored)
+clin$RFS_event <- as.numeric(clin[["Recurrence status (1, yes; 0, no)"]])
+
+# Event time (only exists for recurrences)
+t_event <- suppressWarnings(as.numeric(
+  clin[["number_of_days_from_date_of_initial_pathologic_diagnosis_to_date_of_new_tumor_event_after_initial_treatment"]]
+))
+
+# Censoring time (exists for everyone)
+t_censor <- suppressWarnings(as.numeric(
+  clin[["number_of_days_from_date_of_initial_pathologic_diagnosis_to_date_of_last_contact"]]
+))
+
+# Build RFS time:
+# - if recurrence happened, use recurrence time
+# - otherwise, use last contact time (censored)
+clin$RFS_time <- ifelse(clin$RFS_event == 1, t_event, t_censor)
+
+# Keep complete cases
+clin_rfs <- clin[!is.na(clin$RFS_time) & !is.na(clin$RFS_event), ]
+
+# Sanity checks (should now be close to 95 rows)
+nrow(clin_rfs)
+table(clin_rfs$RFS_event, useNA = "ifany")
+summary(clin_rfs$RFS_time)
+with(clin_rfs, table(subtype, RFS_event))
+
+
+```
+
+# 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+fit_rfs <- survfit(Surv(RFS_time, RFS_event) ~ subtype, data = clin_rfs)
+
+ggsurvplot(
+  fit_rfs,
+  data = clin_rfs,
+  pval = TRUE,
+  conf.int = FALSE,
+  risk.table = TRUE,
+  risk.table.height = 0.25,
+  risk.table.fontsize = 3,
+  risk.table.y.text = FALSE,         # removes overlapping subtype labels in the table
+  break.time.by = 500,
+  xlab = "Days",
+  ylab = "Recurrence-free survival probability",
+  title = "Recurrence-free survival by subtype (k = 8)",
+  legend.title = "Subtype",
+  legend = "top",
+  legend.ncol = 4,
+  ggtheme = theme_classic(base_size = 16),
+  tables.theme = theme_cleantable(base_size = 12)
+)
+
+survdiff(Surv(RFS_time, RFS_event) ~ subtype, data = clin_rfs)
+
+ggsurvplot(fit_rfs, data = clin_rfs, pval = TRUE, risk.table = FALSE,
+           conf.int = FALSE, break.time.by = 500,
+           ggtheme = theme_classic(base_size = 16))
+
+
+
+```
+
+# 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+common <- Reduce(intersect, list(rownames(clin), rownames(rna_k), rownames(prot_k)))
+clin   <- clin[common, , drop=FALSE]
+rna_k  <- rna_k[common, , drop=FALSE]
+prot_k <- prot_k[common, , drop=FALSE]
+
+
+
+
+```
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+library(limma)
+
+design <- model.matrix(~ 0 + subtype, data = clin)
+colnames(design) <- gsub("subtype", "", colnames(design))
+
+make_vs_rest <- function(k, levels_vec) {
+  others <- setdiff(levels_vec, k)
+  paste0(k, " - (", paste(others, collapse = " + "), ")/", length(others))
+}
+
+levels_vec <- levels(clin$subtype)
+contr_mat <- makeContrasts(contrasts = sapply(levels_vec, make_vs_rest, levels_vec = levels_vec),
+                           levels = design)
+colnames(contr_mat) <- paste0(levels_vec, "_vs_rest")
+
+
+```
+
+# RNA markers:
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+fit_rna <- lmFit(t(rna_k), design)
+fit_rna <- contrasts.fit(fit_rna, contr_mat)
+fit_rna <- eBayes(fit_rna)
+
+rna_markers <- lapply(colnames(contr_mat), function(ct) {
+  tt <- topTable(fit_rna, coef = ct, number = 50, sort.by = "P")
+  tt$contrast <- ct
+  tt
+})
+rna_markers <- do.call(rbind, rna_markers)
+head(rna_markers)
+
+```
+
+# Protein markers:
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+fit_prot <- lmFit(t(prot_k), design)
+fit_prot <- contrasts.fit(fit_prot, contr_mat)
+fit_prot <- eBayes(fit_prot)
+
+prot_markers <- lapply(colnames(contr_mat), function(ct) {
+  tt <- topTable(fit_prot, coef = ct, number = 50, sort.by = "P")
+  tt$contrast <- ct
+  tt
+})
+prot_markers <- do.call(rbind, prot_markers)
+head(prot_markers)
+
+
+```
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+write.csv(rna_markers,  file.path(processed_path, "rna_markers_k8_limma.csv"))
+write.csv(prot_markers, file.path(processed_path, "prot_markers_k8_limma.csv"))
+
+
+```
+
+
+
+

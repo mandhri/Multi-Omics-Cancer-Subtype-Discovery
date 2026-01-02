@@ -109,6 +109,15 @@ colnames(pcs) <- c(paste0("ProtPC", 1:n_prot_pc), paste0("RnaPC", 1:n_rna_pc))
 cat("PC matrix:", dim(pcs), "\n")
 
 
+pcs <- cbind(
+  pca_prot$x[, 1:n_prot_pc, drop=FALSE],
+  pca_rna$x[,  1:n_rna_pc,  drop=FALSE]
+)
+colnames(pcs) <- c(paste0("ProtPC", 1:n_prot_pc), paste0("RnaPC", 1:n_rna_pc))
+cat("PC matrix:", dim(pcs), "\n")
+saveRDS(pcs, file.path("/mnt/vol1/Multi-Omics-Cancer-Subtype-Discovery/data/processed/", "pcs.rds"))
+
+
 ```
 
 

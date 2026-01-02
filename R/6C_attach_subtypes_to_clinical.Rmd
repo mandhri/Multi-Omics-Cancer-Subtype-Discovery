@@ -1,0 +1,243 @@
+---
+title: "Baseline Subtype Discovery-sensitivity testing"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: cosmo
+    toc: true
+    toc_float: true
+    number_sections: true
+    code_folding: hide
+---
+
+# Introduction
+
+
+# Setup and Dependencies
+
+The key packages for this script are cluster for silhouette, mclust for ARI, and rcompanion for Cramer’s V.
+
+```{r packages, message=FALSE, warning=FALSE, echo=TRUE}
+suppressPackageStartupMessages({
+library("purrr")
+library("metafor")
+library("dplyr")
+library("readxl")
+library("ggplot2")
+library("tidyverse")
+library("readr")
+library("DESeq2")
+library("dplyr")
+library("stringr")
+library("biomaRt")
+library("inflection")  
+library("ConsensusClusterPlus")  
+library("mclust")
+library("rcompanion")
+library("cluster")
+  
+  
+  
+  
+})
+```
+
+
+# Load clinical, align to pcs, add subtype labels
+
+Interpretation in cancer subtyping
+Cluster sizes are all usable. No “1–3 sample” clusters. That’s good for downstream biology and survival, because tiny clusters often behave like outlier bins. Smallest is 8, which is still borderline for heavy modelling but acceptable for exploratory subtype work.
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+processed_path <- "/mnt/vol1/Multi-Omics-Cancer-Subtype-Discovery/data/processed"
+
+clin <- readRDS(file.path(processed_path, "clinical_a.rds"))
+pcs <- read.csv(file.path(processed_path, "pca_20pcs.csv"), row.names = 1, check.names = FALSE)
+subtypes <- read.csv(file.path(processed_path, "subtype_labels.csv"), row.names = 1)
+
+# Align all by sample order
+common <- intersect(intersect(rownames(clin), rownames(pcs)), rownames(subtypes))
+clin     <- clin[common, , drop=FALSE]
+pcs      <- pcs[common, , drop=FALSE]
+subtypes <- subtypes[common, , drop=FALSE]
+
+# Add subtype column to clinical table
+clin$subtype <- subtypes$subtype
+clin$subtype <- factor(clin$subtype)
+
+table(clin$subtype)
+
+# Save labelled clinical
+write.csv(clin, file.path(processed_path, "clinical_with_subtypes_k8.csv"))
+
+
+
+```
+
+## Age by subtype (continuous variable)
+
+
+Means ranged from about 56.8 (C8) up to about 69.5 (C5).
+Kruskal–Wallis p = 0.1252.
+
+Interpretation
+No statistically strong evidence that age differs by subtype. That’s good because it reduces the chance that subtype associations (especially survival differences later) are simply age-driven.
+
+Cancer context
+Age is a major risk and outcome driver in many cancers. If a subtype was much older, survival differences could be confounded. Here, age looks somewhat different across subtypes but not strongly enough to be confident, and it can still be adjusted for later in Cox models.
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+clin$age_num <- suppressWarnings(as.numeric(clin$age))
+
+tapply(clin$age_num, clin$subtype, function(x)
+  c(n=sum(!is.na(x)), mean=mean(x, na.rm=TRUE), sd=sd(x, na.rm=TRUE),
+    min=min(x, na.rm=TRUE), max=max(x, na.rm=TRUE))
+)
+
+# With k=8, use ANOVA or Kruskal (I’d do Kruskal as default)
+kruskal.test(age_num ~ subtype, data = clin)
+
+
+```
+# Categorical clinical variables (grade / stage / histology)
+
+# Grade low/high
+
+What the counts/proportions show
+
+Some subtypes are clearly high-grade enriched:
+
+C1: 6/8 high grade (75%)
+
+C5: 8/11 high grade (73%) plus 1 unknown
+
+C7: 6/13 high grade (46%)
+
+Some subtypes are basically low-grade:
+
+C4: 0/12 high grade (0%)
+
+C6: 0/13 high grade (0%)
+
+C8: 0/12 high grade (0%)
+
+C2 and C3 are mostly low-grade too.
+
+What the test says:
+
+Monte Carlo chi-square p-value = 5e-05 (extremely strong)
+
+Cramer’s V = 0.5234 (strong association)
+
+This is a real signal.
+
+Interpretation:
+
+Subtype membership is strongly associated with tumour grade. Clustering is picking up a major axis of tumour differentiation/aggressiveness.
+
+Cancer context:
+
+Grade is tightly linked to biological programmes like:
+
+proliferation / cell cycle
+
+dedifferentiation
+
+genomic instability / stress responses
+So the subtypes likely separate tumours along “more aggressive biology” vs “more differentiated biology”.
+
+This is a good validation sign because it means the clusters are not random: they match a real pathology phenotype.
+
+
+```{r, message=FALSE, warning=FALSE, fig.height=5.5, fig.width=10,echo=TRUE}
+
+g <- as.character(clin$histologic_grade)
+g[grepl("^G1", g)] <- "G1"
+g[grepl("^G2", g)] <- "G2"
+g[grepl("^G3", g)] <- "G3"
+g[grepl("^GX", g)] <- "GX"
+clin$grade_simple <- g
+
+clin$grade_low_high <- clin$grade_simple
+clin$grade_low_high[clin$grade_simple %in% c("G1","G2")] <- "Low (G1/G2)"
+clin$grade_low_high[clin$grade_simple == "G3"] <- "High (G3)"
+clin$grade_low_high[clin$grade_simple == "GX"] <- "Unknown"
+
+tab_g2 <- table(clin$subtype, clin$grade_low_high, useNA="ifany")
+tab_g2
+round(prop.table(tab_g2, 1), 3)
+
+chisq.test(tab_g2, simulate.p.value = TRUE, B = 20000)
+rcompanion::cramerV(tab_g2)
+
+
+```
+# Pathological stage (Stage I–IV)
+
+
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+tab_stage <- table(clin$subtype, clin$tumor_stage_pathological, useNA="ifany")
+tab_stage
+round(prop.table(tab_stage, 1), 3)
+
+chisq.test(tab_stage, simulate.p.value = TRUE, B = 20000)
+rcompanion::cramerV(tab_stage)
+
+
+```
+
+# Primary tumour extent (pT simplified
+
+Across almost all subtypes, pT1a dominates (many early tumours). A few subtypes have more pT2/pT3 cases (for example C7 has more pT2 than most), but the pattern is not strong or consistent enough.
+
+What the test says
+
+Monte Carlo chi-square p-value = 0.2962
+
+Cramer’s V = 0.2854 (small-to-moderate association)
+
+Interpretation (plain)
+
+There is no convincing evidence that subtypes differ by pT category in this dataset. Any differences seen in the table are likely compatible with chance given the small counts spread across 8 subtypes and 6 pT categories.
+
+Cancer context
+
+pT is mainly about local tumour extent (how far the primary tumour has grown/invaded). Molecular subtypes often exist across similar pT categories because pT is influenced by detection timing and anatomy as well as biology. So “no pT association” is common and not a problem.
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+pt <- as.character(clin$pathologic_staging_primary_tumor_pt)
+pt <- gsub("\\s*\\(.*\\)", "", pt)
+pt <- trimws(pt)
+clin$pt_simple <- sub("^((pT)[0-9][a-z]?).*$", "\\1", pt)
+
+tab_pt <- table(clin$subtype, clin$pt_simple, useNA="ifany")
+tab_pt
+round(prop.table(tab_pt, 1), 3)
+chisq.test(tab_pt, simulate.p.value = TRUE, B = 20000)
+rcompanion::cramerV(tab_pt)
+
+
+
+```
+
+# 
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+```
+
+
+```{r, message=FALSE, warning=FALSE, echo=TRUE}
+
+
+
+
+```
