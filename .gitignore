@@ -1,20 +1,11 @@
-# Data (big, reproducible, don’t commit)
 data/raw/
 data/processed/
-
-# Jupyter
 .ipynb_checkpoints/
-
-# Python artefacts
 __pycache__/
 *.pyc
 .venv/
 .env
-
-# R artefacts
 .Rhistory
 .RData
 .Rproj.user/
-
-# Misc
 *.log
