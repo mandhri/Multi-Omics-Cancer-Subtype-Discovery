@@ -1,64 +1,33 @@
-Multi-Omics Cancer Subtype Discovery (CPTAC UCEC)
-================
+# Multi-Omics Cancer Subtype Discovery (CPTAC UCEC)
 
-- <a href="#project-overview" id="toc-project-overview">Project
-  Overview</a>
-- <a href="#project-overview-1" id="toc-project-overview-1">Project
-  overview</a>
-- <a href="#data-source" id="toc-data-source">Data Source</a>
-- <a href="#architecture-hpc-remote-setup"
-  id="toc-architecture-hpc-remote-setup">Architecture (HPC Remote
-  Setup)</a>
-- <a href="#analysis-workflow" id="toc-analysis-workflow">Analysis
-  Workflow</a>
-  - <a href="#1-data-ingestion--alignment-r"
-    id="toc-1-data-ingestion--alignment-r">1 Data ingestion + alignment
-    (R)</a>
-  - <a href="#phase-2--dimensionality-reduction--integration-python"
-    id="toc-phase-2--dimensionality-reduction--integration-python">Phase 2 —
-    Dimensionality Reduction &amp; Integration (Python)</a>
-  - <a href="#phase-3--subtype-discovery--modelling-python"
-    id="toc-phase-3--subtype-discovery--modelling-python">Phase 3 — Subtype
-    Discovery &amp; Modelling (Python)</a>
-  - <a href="#phase-4--visualisation--reporting-r"
-    id="toc-phase-4--visualisation--reporting-r">Phase 4 — Visualisation
-    &amp; Reporting (R)</a>
-- <a href="#quality-checks" id="toc-quality-checks">Quality Checks</a>
-- <a href="#directory-structure" id="toc-directory-structure">Directory
-  Structure</a>
-
-![Status](https://img.shields.io/badge/Status-In%20Progress-yellow)
-![Primary](https://img.shields.io/badge/Primary%20Pipeline-R-brightgreen)
-![Supporting](https://img.shields.io/badge/Supporting-Python-blue)
-![Infrastructure](https://img.shields.io/badge/Infrastructure-Remote%20%2F%20HPC-orange)
+![Status](https://img.shields.io/badge/Status-Complete-success)
+![Data](https://img.shields.io/badge/Data-CPTAC%20(UCEC)-blueviolet)
+![Pipeline](https://img.shields.io/badge/Pipeline-Python%20%2F%20R%20Hybrid-blue)
+![Analysis](https://img.shields.io/badge/Analysis-Unsupervised%20Clustering-orange)
 
 ## Project Overview
 
-## Project overview
+This repository contains a comprehensive **hybrid R/Python workflow** for molecular subtype discovery in **Uterine Corpus Endometrial Carcinoma (UCEC)**. 
 
-This repository contains a **hybrid R/Python workflow** that integrates:
+By integrating **Proteomics** (TMT mass spec) and **Transcriptomics** (RNA-seq) data, this project moves beyond standard clinical staging to identify molecularly distinct tumour subgroups. The workflow leverages the strengths of both ecosystems:
+* **Python:** Used for data engineering (API ingestion), dimensionality reduction, and initial clustering prototypes.
+* **R:** Used for rigorous statistical stability testing, "publication-ready" survival analysis, and biomarker discovery (`limma`).
 
-- **Mass spectrometry proteomics** (protein abundance)
-- **RNA-seq transcriptomics** (gene expression)
-- **Clinical variables** (grade, stage, survival)
+### Key Findings
+* **Prototype (Python):** Initial stability analysis identified a broad, stable 2-cluster split ($k=2$), separating tumours roughly by aggressiveness.
+* **Refinement (R):** Advanced consensus clustering revealed a more granular **8-subtype structure ($k=8$)**.
+* **Validation:** The $k=8$ subtypes showed a statistically significant association with **Histological Grade** (Fisher's Exact Test, $p < 0.001$), confirming biological relevance beyond technical batch effects.
 
-The goal is to **discover molecular subtypes in cancer**, interpret what
-separates them (candidate markers/pathways), and evaluate whether
-subtypes relate to **clinical outcomes**.
+---
 
-**Tooling** - **R (tidyverse + Bioconductor)** is used for data
-cleaning, QC, statistics, and publication-grade reporting (clinical
-association + survival plots). - **Python (scikit-learn / PyTorch)** is
-used for exploratory dimensionality reduction, clustering prototypes,
-and baseline predictive modelling / feature ranking.
+## Architecture & Infrastructure
 
-**Infrastructure** This project was executed across two environments: -
-**Python (JupyterLab):** run on a headless remote server for exploratory
-modelling and prototyping. - **R (Rmd/analysis):** run on a HPC
-environment for data engineering, QC, clinical association testing, and
-reporting.
+This project was executed in a high-performance computing (HPC) environment to handle large multi-omics matrices.
 
-------------------------------------------------------------------------
+* **Remote Server (Python):** Data acquisition and heavy-lifting preprocessing were performed via JupyterLab, accessed via **SSH tunnelling** on a headless remote server.
+* **HPC Node (R):** Statistical validation and reporting were executed in an RStudio Server environment within the HPC infrastructure.
+
+---
 
 ## Data Source
 
@@ -71,136 +40,133 @@ Analysis Consortium)**.
 | **Transcriptomics** | RNA-seq (Illumina)        | raw counts / normalised expression | \~15k–25k genes × \~100–500 samples   |
 | **Clinical**        | patient metadata          | categorical + continuous           | survival, grade, stage, etc.          |
 
-------------------------------------------------------------------------
+---
 
-## Architecture (HPC Remote Setup)
+## Repository Structure & Workflow
 
-This project was executed across two environments:
+The analysis is divided into two pipelines. To reproduce the findings, run the `python_pipeline` first (data acquisition), followed by the `r_analysis` (statistical validation).
 
-1.  **Headless remote server (Python / JupyterLab):**
-    - Used for the Python notebooks (data download + quick modelling
-      prototypes).
-    - Accessed from a local browser via **SSH tunnelling** (for example,
-      port `8889` for JupyterLab).
-2.  **HPC environment (R / reporting + stats):**
-    - Used for the R pipeline (data QC, clinical association testing,
-      and Rmd reporting).
-    - R scripts/Rmd were run directly in the HPC environment (separate
-      from the Python runtime).
-3.  **Outputs shared via files:**
-    - Intermediate outputs are written to `data/processed/` (CSV/RDS)
-      and reused across steps.
+### Phase 1: Python Pipeline (Data Engineering & Prototyping)
+*Located in `/python_pipeline`*
 
-------------------------------------------------------------------------
+| Script | Description | Original File |
+| :--- | :--- | :--- |
+| `01_download_data.ipynb` | Automated download of UCEC clinical & omics data via `cptac` API. | `1A_download_cptac.ipynb` |
+| `02_align_samples.ipynb` | Aligns Clinical, Proteomics, and RNA indices (N=95 common samples). | `2A1_align_samples.ipynb` |
+| `03_proteomics_qc.ipynb` | Missing value imputation (median) and dropout filtering (>40%). | `2A2_Proteomics_missingness_qc.ipynb` |
+| `04_rna_filter.ipynb` | Variance filtering to remove near-constant genes. | `3A3_rna_sanity_filter.ipynb` |
+| `05_baseline_model.ipynb` | PCA dimensionality reduction & baseline K-means modelling. | `4B_baseline_subtypes.ipynb` |
+| `06_stability_check.ipynb` | Initial ARI (Adjusted Rand Index) stability testing. | `5B_cluster_stability.ipynb` |
+| `07_parameter_tuning.ipynb` | Comparison of $k=2..6$. Identified stable $k=2$ prototype. | `6B_pick_k_by_stability.ipynb` |
+| `08_prototype_labels.ipynb` | Generating labels for the $k=2$ prototype model. | `7B_final_subtypes_k2.ipynb` |
+| `09_clinical_merge.ipynb` | Merging prototype subtypes with clinical metadata. | `8C_attach_subtypes_to_clinical.ipynb` |
+| `10_surv_prep.ipynb` | Inspection of survival columns (OS/RFS). | `9C_survival_column_check.ipynb` |
+| `11_km_plot_OS.ipynb` | Kaplan-Meier plotting for Overall Survival (Prototype). | `10C_kaplan_meier_OS.ipynb` |
+| `12_km_plot_RFS.ipynb` | Kaplan-Meier plotting for Recurrence-Free Survival (Prototype). | `11C_kaplan_meier_RFS.ipynb` |
 
-## Analysis Workflow
+### Phase 2: R Pipeline (Statistical Refinement & Validation)
+*Located in `/r_analysis`*
 
-### 1 Data ingestion + alignment (R)
+| Script | Description | Original File |
+| :--- | :--- | :--- |
+| `01_import_align.Rmd` | Re-importing raw data into the R ecosystem (`tidyverse`). | `2A1_align_samples` |
+| `02_imputation_logic.Rmd` | Comparison of Median vs. MinProb imputation strategies. | `2A2_Proteomics_missingness_qc.Rmd` |
+| `03_feature_selection.Rmd` | Variance filtering for zero-information genes. | `3A3_rna_sanity_filter.ipynb.Rmd` |
+| `04_batch_detection.Rmd` | PCA visual inspection for technical batch effects. | `3A4_batch_detection_pca.Rmd` |
+| `05_consensus_cluster.Rmd` | **Core Analysis:** Knee/Elbow plots and Silhouette analysis. | `4B_baseline_subtypes.Rmd` |
+| `06_sensitivity_test.Rmd` | **Key Step:** Identified $k=8$ as optimal stable structure via ARI. | `5B_cluster_stability.Rmd` |
+| `07_clinical_stats.Rmd` | **Validation:** Monte Carlo Chi-square testing against Histological Grade. | `6C_attach_subtypes_to_clinical.Rmd` |
+| `08_survival_analysis.Rmd` | Final Kaplan-Meier curves and Log-rank testing for $k=8$. | `7C_Survival by subtype...Rmd` |
 
-**Goal:** produce clean, matched matrices ready for downstream
-modelling.
+---
 
-- **Proteomics QC + missingness review**
-  - characterise missing values (common in mass spec)
-  - impute using approaches supported by `DEP` / `MSnbase` when
-    appropriate
-- **Normalisation**
-  - RNA-seq: start from counts and transform to ML-friendly values
-    (e.g., log-scale normalised expression)
-  - Proteomics: typical approaches include median/VSN-style scaling
-- **Batch assessment**
-  - visualise technical effects (PCA, metadata checks)
-  - apply batch correction only if clearly required
+## Clustering Strategy: Prototype vs. Refinement
 
-**Output:** cleaned, aligned sample-by-feature matrices saved to
-`data/processed/`
+This project utilised a **two-stage clustering approach**, using Python for rapid prototyping and R for rigorous stability refinement.
 
-------------------------------------------------------------------------
+### 1. Python Prototype (Standard K-Means)
 
-### Phase 2 — Dimensionality Reduction & Integration (Python)
+The Python workflow utilised **single-fit K-Means clustering** and evaluated the optimal cluster number ($k$) using global variance metrics:
 
-**Goal:** learn a compact representation of each patient/sample.
+* **Elbow Method:** Identifies the point of diminishing returns in variance explanation.
+* **Silhouette Score:** Measures cohesion (closeness to own cluster) vs. separation (distance to nearest neighbour).
 
-- **Feature filtering**
-  - remove near-constant features and obvious noise
-- **Dimensionality reduction**
-  - PCA / UMAP / t-SNE for visualising sample structure
-- **Integration**
-  - start with a simple baseline (concatenate scaled omics layers)
-  - optionally add a dedicated integration method later (e.g., factor
-    models or neural embeddings)
+**Result:**
+Because these metrics are applied to a single fit of the data, they tend to emphasise the dominant global split. In this analysis, heuristics converged on a coarse **$k=2$ partition**.
 
-**Output:** integrated latent matrix + embeddings used for clustering.
+> **Note:** The `k = 2` split roughly aligned with tumour grade (Low vs High).“Aggressiveness” was not used during clustering. This interpretation was assessed after clustering by comparing groups against clinical variables.
 
-------------------------------------------------------------------------
+### 2. R Refinement (Consensus Clustering)
 
-### Phase 3 — Subtype Discovery & Modelling (Python)
+To detect stable substructure beyond the dominant global split, the R workflow used `ConsensusClusterPlus`, which performs resampling-based clustering.
 
-**Goal:** define subtypes and test whether they matter clinically.
+To resolve granular phenotypes, the R workflow utilised `ConsensusClusterPlus`. This method employs **resampling-based clustering** to measure solution stability under perturbation.
 
-- **Clustering**
-  - k-means / Leiden (graph-based) on integrated features
-  - compare results across settings to avoid “random” clusters
-- **Subtype association with outcomes**
-  - survival comparison across subtypes (later plotted in R)
-- **Prediction (optional)**
-  - train baseline models (Random Forest / XGBoost) for outcome
-    prediction
-  - extract feature importance to highlight candidate biomarkers
+**Example setup:**
+* **Resampling:** Subsampled 80% of items across 1000 iterations.
+* **Consensus:** Calculated how often pairs of samples clustered together across these iterations.
+* **Matrix Generation:** Produced a consensus matrix to visualise membership consistency.
 
-**Output:** subtype labels per patient + model outputs (metrics, feature
-importance).
 
-------------------------------------------------------------------------
+This approach prioritises **reproducibility** under sampling variation rather than simple variance explanation.
 
-### Phase 4 — Visualisation & Reporting (R)
+**Stability Metric:**
+* **PAC (Proportion of Ambiguous Clustering):** A low PAC score indicates that clusters are well-resolved, with very few sample pairs falling into the "ambiguous" consensus range (i.e., pairs that sometimes cluster together and sometimes do not).
 
-**Goal:** publishable figures and interpretable biology.
+**Result:**
+Stability diagnostics, specifically the minimisation of PAC, supported a more granular **$k=8$ solution**. This structure proved robust to resampling and provided a significantly higher-resolution view of biological heterogeneity compared to the prototype.
 
-- **Survival analysis**
-  - Kaplan–Meier curves (`survival`, `survminer`) by subtype
-- **Heatmaps**
-  - top subtype-defining proteins/genes (`ComplexHeatmap`)
-- **Pathway analysis**
-  - FGSEA / ORA for biological interpretation
+---
 
-**Output:** figures + tables saved to `reports/` (or exported for
-manuscripts).
+## Dependencies
 
-------------------------------------------------------------------------
+**Python:**
+* `cptac` (Data ingestion)
+* `pandas`, `numpy` (Data manipulation)
+* `scikit-learn` (PCA, K-Means, Metrics)
+* `lifelines` (Survival Analysis)
 
-## Quality Checks
+**R:**
+* `tidyverse` (Data manipulation)
+* `ConsensusClusterPlus` (Robust Clustering)
+* `limma` (Differential Expression)
+* `survival`, `survminer` (Survival Stats & Viz)
+* `ComplexHeatmap` (Visualisation)
 
-To keep results reliable, this repo will progressively add:
+---
 
-1.  **RNA-seq inputs that are ML-friendly** (avoid relying on FPKM)
-2.  **Careful batch handling** (avoid removing real biology)
-3.  **A clear proteomics missingness strategy** (conservative vs
-    exploratory)
-4.  **Cluster stability checks** (not just one run)
-5.  **Leakage-safe model evaluation** (proper cross-validation workflow)
-6.  **A small set of integration methods** (baseline + 1–2 stronger
-    methods)
-
-------------------------------------------------------------------------
-
-## Directory Structure
-
-``` bash
+## Directory structure (current)
+```bash
 Multi-Omics-Cancer-Subtype-Discovery/
 ├── README.md
 ├── Multi-Omics-Cancer-Subtype-Discovery.Rproj
-├── notebooks/                
-├── R/                         
-│   ├── 00_config.R
-│   └── functions/
-├── analysis/                  
-│   └── report.Rmd            
-├── results/                  
+├── notebooks/
+│   ├── 1A_download_cptac.ipynb
+│   ├── 2A1_align_samples.ipynb
+│   ├── 2A2_Proteomics_missingness_qc.ipynb
+│   ├── 3A3_rna_sanity_filter.ipynb
+│   ├── 4B_baseline_subtypes.ipynb
+│   ├── 5B_cluster_stability.ipynb
+│   ├── 6B_pick_k_by_stability.ipynb
+│   ├── 7B_final_subtypes_k2.ipynb
+│   ├── 8C_attach_subtypes_to_clinical.ipynb
+│   ├── 9C_survival_column_check.ipynb
+│   ├── 10C_kaplan_meier_OS.ipynb
+│   └── 11C_kaplan_meier_RFS.ipynb
+├── R/
+│   ├── 2A1_align_samples.Rmd
+│   ├── 2A2_Proteomics_missingness_qc.Rmd
+│   ├── 3A3_rna_sanity_filter.Rmd
+│   ├── 3A4_batch_detection_pca.Rmd
+│   ├── 4B_baseline_subtypes.Rmd
+│   ├── 5B_cluster_stability.Rmd
+│   ├── 6C_attach_subtypes_to_clinical.Rmd
+│   └── 7C_survival_by_subtype_clinical_relevance.Rmd
+├── results/
 │   ├── figures/
 │   └── tables/
-└── data/                      
-    ├── raw/                  
-    └── processed/            
-
+└── data/
+    ├── raw/
+    └── processed/
 ```
+---
